@@ -1,0 +1,29 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets and local data
+.env
+promptshield.db
+*.db
+
+# Trained models and training output
+app/models/bert/
+bert_tmp/
+*.safetensors
+*.bin
+
+# Frontend
+node_modules/
+dist/
+
+# Generated results
+redteam_missed.json
+
+# Editor and OS
+*~
+.vscode/
+.DS_Store
+Thumbs.db
