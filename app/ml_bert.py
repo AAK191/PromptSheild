@@ -11,7 +11,7 @@ def _load():
     if _model is None and os.path.isdir(_PATH):
         _tok = AutoTokenizer.from_pretrained(_PATH)
         _model = AutoModelForSequenceClassification.from_pretrained(_PATH)
-        _model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
+        _model.to("cpu").eval()
     return _model
 
 def bert_prob(text: str) -> float:

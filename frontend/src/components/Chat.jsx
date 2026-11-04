@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, ShieldCheck, X } from 'lucide-react'
-import { AuthError, NetworkError, RateLimitError, ShieldBlockedError, ValidationError, sendChat } from '../api'
+import { AuthError, NetworkError, RateLimitError, ShieldBlockedError, ValidationError, streamChat } from '../api'
 import Composer from './Composer.jsx'
 import Message, { Thinking } from './Message.jsx'
 import AlertModal from './AlertModal.jsx'
@@ -16,6 +16,9 @@ const SUGGESTIONS = [
 export default function Chat({ t }) {
   const nav = useNavigate()
   const thread = t.threads.find((x) => x.id === t.activeId)
+ 
+
+
   const [busy, setBusy] = useState(false)
   const [block, setBlock] = useState(null)   // attack alert (modal)
   const [notice, setNotice] = useState(null) // non-attack problems (banner)
@@ -36,11 +39,55 @@ export default function Chat({ t }) {
     }))
     setBusy(true); setNotice(null)
 
+    const aId = t.uid()
+    const setReply = (content) => {
+  t.patch(id, (th) => {
+    const exists = th.messages.some((m) => m.id === aId);
+
+    return {
+      ...th,
+      messages: exists
+        ? th.messages.map((m) =>
+            m.id === aId ? { ...m, content } : m
+          )
+        : [
+            ...th.messages,
+            {
+              id: aId,
+              role: "assistant",
+              content,
+            },
+          ],
+    };
+  });
+};
+
+
+
+  const dropReply = () => {
+  t.patch(id, (th) => ({
+    ...th,
+    messages: th.messages.filter((m) => m.id !== aId),
+  }))
+  }
+    let last = 0
+
     try {
       // One session per thread, so attacks split across messages are still caught.
-      const r = await sendChat(text, `web-${id}`)
-      t.patch(id, (th) => ({ ...th, messages: [...th.messages, { id: t.uid(), role: 'assistant', content: r.response }] }))
-    } catch (e) {
+      const finalText = await streamChat(text, `web-${id}`, {
+  onDelta: (full) => {
+    const now = performance.now();
+
+    if (now - last > 60) {
+     setReply(full);
+     last = now;
+    }
+  }
+});
+
+setReply(finalText);
+ } catch (e) {
+      dropReply()   // never leave a partial answer on screen when a request fails or is stopped
       if (e instanceof ShieldBlockedError) {
         // Never show an AI answer for a blocked request: mark the message and raise the alert.
         t.patch(id, (th) => ({ ...th, messages: th.messages.map((m) => (m.id === userMsg.id ? { ...m, blocked: true } : m)) }))
@@ -87,7 +134,7 @@ export default function Chat({ t }) {
         ) : (
           <div className="mx-auto w-full max-w-3xl space-y-8 px-4 py-8">
             {thread.messages.map((m) => <Message key={m.id} m={m} />)}
-            {busy && <Thinking />}
+            {busy && thread.messages[thread.messages.length - 1]?.role === 'user' && <Thinking />}
             <div ref={endRef} />
           </div>
         )}

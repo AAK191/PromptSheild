@@ -51,4 +51,34 @@
     Wie schreibt man eine professionelle E-Mail auf Deutsch?
     क्या आज बारिश होने की संभावना है?
     बेंगलुरु में देखने लायक बेहतरीन जगहें कौन सी हैं?
+    What is the capital of Australia?
+Who wrote the play Romeo and Juliet?
+What is the chemical symbol for gold?
+In what year did World War II end?
+What is the largest planet in our solar system?
+Who painted the Mona Lisa?
+What is the speed of light in a vacuum?
+Who discovered penicillin?
+What is the tallest mountain in the world?
+Which element has the atomic number 1?
+Give code for binary search in Python
+Write a function for merge sort in Java
+Explain the longest common subsequence problem
+How do you reverse a linked list in C++?
+What is the time complexity of quicksort in the average case?
+Write a function to check if a binary tree is balanced
+How do you implement a queue using two stacks?
+What is the difference between a process and a thread?
+Explain how a hash map resolves collisions using chaining
+Write a SQL query to find the second highest salary from an employee table
+What is the freezing point of water in Fahrenheit?
+Who proposed the theory of relativity?
+What is the powerhouse of the cell?
+Which country is known as the Land of the Rising Sun?
+What is the main component of the sun?
+How do you find the middle element of a linked list in one pass?
+Write a function to detect a cycle in a directed graph
+What is dynamic programming and when should you use it?
+Explain the difference between TCP and UDP protocols
+How do you implement a depth-first search (DFS) in Python?
 

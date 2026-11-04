@@ -2,6 +2,9 @@ import os
 import time
 import json
 import ollama
+import json
+from fastapi.responses import StreamingResponse
+
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field
 
@@ -15,6 +18,11 @@ from .db import conn, init_db, log_request, add_history, get_history
 from .output_shield import shield_output, CANARY
 
 app = FastAPI(title="Prompt Shield")
+
+
+@app.on_event("startup")
+def warm_models():
+    scan_text("warm up")
 
 # --- MOVE CHATIN UP HERE ---
 class ChatIn(BaseModel):
@@ -117,21 +125,39 @@ def scan_text(text: str):
 init_db()   # creates tables at startup
 
 def scan_request(body: ChatIn):
-    parts = [("prompt", body.prompt)]
-    parts += [(f"context[{i}]", c) for i, c in enumerate(body.context)]
+    # 1. ALWAYS scan the fresh user prompt strictly by itself
+    prompt_res = scan_text(body.prompt)
+    worst = {**prompt_res, "source": "prompt"}
+
+    # 2. Check context items if provided
+    for i, c in enumerate(body.context):
+        r = scan_text(c)
+        if r["score"] > worst["score"]:
+            worst = {**r, "source": f"context[{i}]"}
+
+    # 3. Check historical text if session exists, but NEVER let old history block 
+    # a brand new clean prompt unless the prompt itself is malicious.
     if body.session_id:
         past = get_history(body.session_id)
-        parts.append(("history", " ".join(past) + " " + body.prompt))
+        if past:
+            # Optional: scan history lightly or keep history tracking separate
+            history_text = " ".join(past)
+            hist_res = scan_text(history_text)
+            if hist_res["score"] > worst["score"] and not prompt_res["safe"]:
+                worst = {**hist_res, "source": "history"}
 
-    worst = {"safe": True, "score": 0.0, "categories": [], "source": "prompt"}
-    for name, text in parts:
-        r = scan_text(text)
-        if r["score"] > worst["score"]:
-            worst = {**r, "source": name}
+    # If the core prompt is safe, ensure the overall decision remains safe
+    if prompt_res["safe"]:
+        worst["safe"] = True
+        worst["score"] = prompt_res["score"]
+        worst["categories"] = prompt_res["categories"]
+        worst["source"] = "prompt"
 
-    if body.session_id and worst["safe"]:
+    if body.session_id and prompt_res["safe"]:
         add_history(body.session_id, body.prompt)
+        
     return worst
+
 
 @app.post("/scan")
 def scan(body: ChatIn, _key: str = Depends(require_key)):
@@ -221,3 +247,68 @@ def revoke(key_id: int):
     if not revoke_key(key_id):
         raise HTTPException(404, "No such key")
     return {"revoked": key_id}
+
+
+HOLD = len(CANARY)     # keep this many trailing characters back so a split marker is never shown
+CHECK_EVERY = 4        # run the leak check every 4 chunks
+
+def _sse(obj):
+    return f"data: {json.dumps(obj)}\n\n"
+
+@app.post("/chat/stream")
+def chat_stream(body: ChatIn, _key: str = Depends(require_key)):
+    t0 = time.perf_counter()
+    ms = lambda: int((time.perf_counter() - t0) * 1000)
+    r = scan_request(body)
+
+    def events():
+        if not r["safe"]:
+            log_request(session_id=body.session_id, prompt=body.prompt, safe=False, blocked=True,
+                        stage="input", score=r["score"], categories=r["categories"],
+                        source=r["source"], latency_ms=ms())
+            yield _sse({"type": "blocked", "stage": "input", "score": r["score"], "categories": r["categories"]})
+            return
+
+        acc, sent = "", 0
+        try:
+            stream = ollama.chat(
+                model="llama3.2", stream=True, keep_alive="30m",
+                options={
+                    "num_ctx": 2048,
+                    "num_predict": 600
+                },
+                messages=[{"role": "system", "content": SYSTEM},
+                          {"role": "user", "content": f"<user_input>{_strip_tags(body.prompt)}</user_input>"}],
+            )
+            for i, chunk in enumerate(stream):
+                acc += chunk["message"]["content"]
+                if i % CHECK_EVERY == 0:
+                    chk = shield_output(acc, SYSTEM)
+                    if chk["blocked"]:
+                        log_request(session_id=body.session_id, prompt=body.prompt, safe=True, blocked=True,
+                                    stage="output", score=r["score"], categories=chk["findings"],
+                                    source="output", latency_ms=ms())
+                        yield _sse({"type": "blocked", "stage": "output", "findings": chk["findings"]})
+                        return
+                upto = len(acc) - HOLD
+                if upto > sent:
+                    yield _sse({"type": "delta", "text": acc[sent:upto]})
+                    sent = upto
+        except Exception as e:
+            yield _sse({"type": "error", "message": f"The model is unavailable. Check that Ollama is running. ({e})"})
+            return
+
+        out = shield_output(acc, SYSTEM)
+        if out["blocked"]:
+            log_request(session_id=body.session_id, prompt=body.prompt, safe=True, blocked=True,
+                        stage="output", score=r["score"], categories=out["findings"],
+                        source="output", latency_ms=ms())
+            yield _sse({"type": "blocked", "stage": "output", "findings": out["findings"]})
+            return
+        log_request(session_id=body.session_id, prompt=body.prompt, safe=True, blocked=False,
+                    stage="passed", score=r["score"], categories=r["categories"] + out["findings"],
+                    source=r["source"], latency_ms=ms())
+        yield _sse({"type": "done", "text": _strip_tags(out["response"])})
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

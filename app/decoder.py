@@ -1,5 +1,7 @@
 import base64, binascii, html, math, re, unicodedata, urllib.parse
 from collections import Counter
+import re
+_LEET_TOKEN = re.compile(r"\b(?=\w*[a-z])(?=\w*[0-9@$])\w+\b")
 
 B64_RE = re.compile(r"[A-Za-z0-9+/_\-]{16,}={0,2}")
 B32_RE = re.compile(r"[A-Za-z2-7]{16,}={0,6}")
@@ -125,8 +127,13 @@ def variants(n: str):
         if es >= 0.2 and es > base + 0.15:
             out.append((name, v))
 
-    if (v := n.translate(LEET)) != n:
-        out.append(("leet", v))
+    
+    if _LEET_TOKEN.search(n):
+        v = n.translate(LEET)
+        if v != n:
+            es = english_score(v)
+            if es >= 0.2 and es > base + 0.15:
+                out.append(("leet", v))
     if (v := CONCAT.sub("", n)) != n:
         out.append(("concat", v))
     return out
